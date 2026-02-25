@@ -127,7 +127,7 @@ export default function Home() {
             rel="noopener noreferrer"
             className="inline-block border border-[var(--color-lime)] text-[var(--color-lime)] px-8 py-2.5 text-sm hover:bg-[var(--color-lime)] hover:text-black transition-colors"
           >
-            download limes.exe
+            latest release
           </a>
         </div>
 
