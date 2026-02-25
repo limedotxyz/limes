@@ -458,7 +458,7 @@ def main():
     )
     parser.add_argument("-v", "--version", action="version", version=f"limes {VERSION}")
     parser.add_argument("command", nargs="?", default=None,
-                        help="setup | connect <addr> | peers | reset | upgrade | relay | scanner")
+                        help="setup | connect <addr> | peers | reset | upgrade | relay | wallet")
     parser.add_argument("address", nargs="?", default=None)
     parser.add_argument("-p", "--port", type=int, default=TCP_PORT_DEFAULT,
                         help="TCP listen port")
@@ -483,9 +483,10 @@ def main():
         return
 
     if args.command == "scanner":
-        from lime.scanner import main as scanner_main
-        relay_url = args.address if args.address else None
-        scanner_main(relay_url=relay_url)
+        print()
+        print("  scanner is now built into 'limes relay'.")
+        print("  just run: limes relay")
+        print()
         return
 
     if args.command == "setup":
