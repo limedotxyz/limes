@@ -22,7 +22,7 @@ PRUNE_INTERVAL = 10         # seconds between expired-message sweeps
 # Relay servers — peers connect here to find each other through NATs.
 # Anyone can run a relay with `lime relay`. Add your relay URL here.
 RELAY_SERVERS = [
-    "ws://localhost:4210",
+    "wss://relay-production-e4f7.up.railway.app",
 ]
 
 # Direct-connect bootstrap peers (IP:port of known nodes)
