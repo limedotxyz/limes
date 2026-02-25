@@ -87,6 +87,7 @@ export default function ScanPage() {
   const [uptime, setUptime] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedPanel, setExpandedPanel] = useState<ExpandedPanel>(null);
+  const [selectedMessage, setSelectedMessage] = useState<LimeMessage | null>(null);
   const [boardFilter, setBoardFilter] = useState<string>("all");
   const [threadFilter, setThreadFilter] = useState<string>("all");
   const wsRef = useRef<WebSocket | null>(null);
@@ -272,6 +273,11 @@ export default function ScanPage() {
         />
       )}
 
+      {/* message detail overlay */}
+      {selectedMessage && (
+        <MessageDetail msg={selectedMessage} onClose={() => setSelectedMessage(null)} />
+      )}
+
       <main className="mx-auto max-w-7xl px-4 py-5 space-y-4">
         {/* header */}
         <header className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-4 border-b border-[var(--color-border)]">
@@ -394,7 +400,7 @@ export default function ScanPage() {
                 </p>
               )}
               {filteredMessages.map((msg) => (
-                <MessageRow key={msg.id} msg={msg} />
+                <MessageRow key={msg.id} msg={msg} onSelect={() => setSelectedMessage(msg)} />
               ))}
             </div>
           </div>
@@ -724,6 +730,111 @@ function ExpandedOverlay({
 }
 
 // ------------------------------------------------------------------
+// Message detail overlay (like a tx page)
+// ------------------------------------------------------------------
+
+function MessageDetail({ msg, onClose }: { msg: LimeMessage; onClose: () => void }) {
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [onClose]);
+
+  const elapsed = Date.now() / 1000 - msg.timestamp;
+  const remaining = Math.max(0, msg.ttl - elapsed);
+  const remainMin = Math.floor(remaining / 60);
+  const remainSec = Math.floor(remaining % 60);
+  const date = new Date(msg.timestamp * 1000);
+  const board = msg.board || "general";
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-[var(--color-background)]/95 backdrop-blur-sm flex items-start justify-center pt-16 px-4"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="w-full max-w-2xl border border-[var(--color-border)] bg-[var(--color-panel)]">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)]">
+          <h2 className="text-[var(--color-lime)] font-bold text-sm">proof details</h2>
+          <button
+            onClick={onClose}
+            className="text-[var(--color-foreground)]/30 hover:text-[var(--color-foreground)]/70 text-lg leading-none transition-colors"
+          >
+            &times;
+          </button>
+        </div>
+
+        <div className="p-4 space-y-3 text-xs">
+          <DetailRow label="pow hash" mono>
+            <span className="text-[var(--color-lime)] break-all">{msg.pow_hash}</span>
+          </DetailRow>
+          <DetailRow label="nonce">
+            <span className="text-[var(--color-foreground)]/70">{msg.nonce.toLocaleString()}</span>
+          </DetailRow>
+          <DetailRow label="status">
+            {remaining > 0 ? (
+              <span className="text-[var(--color-lime)]">
+                active — {remainMin}:{remainSec.toString().padStart(2, "0")} remaining
+              </span>
+            ) : (
+              <span className="text-red-400">expired</span>
+            )}
+          </DetailRow>
+
+          <div className="border-t border-[var(--color-border)]/20 pt-3" />
+
+          <DetailRow label="author">
+            <span className="text-[var(--color-lime)] font-bold">{msg.author_name}</span>
+            <span className="text-[var(--color-foreground)]/20">#{msg.author_tag}</span>
+          </DetailRow>
+          <DetailRow label="board">
+            <span className="text-yellow-400/60">/{board}/</span>
+          </DetailRow>
+          {msg.thread_title && (
+            <DetailRow label="thread">
+              <span className="text-cyan-400/60">{msg.thread_title}</span>
+            </DetailRow>
+          )}
+          <DetailRow label="timestamp">
+            <span className="text-[var(--color-foreground)]/70">
+              {date.toISOString()} ({formatAgo(msg.timestamp)})
+            </span>
+          </DetailRow>
+          <DetailRow label="ttl">
+            <span className="text-[var(--color-foreground)]/70">{msg.ttl}s ({Math.floor(msg.ttl / 60)} min)</span>
+          </DetailRow>
+          <DetailRow label="type">
+            <span className="text-[var(--color-foreground)]/70">{msg.content_type}</span>
+          </DetailRow>
+          <DetailRow label="message id" mono>
+            <span className="text-[var(--color-foreground)]/40 break-all">{msg.id}</span>
+          </DetailRow>
+
+          <div className="border-t border-[var(--color-border)]/20 pt-3" />
+
+          <div>
+            <div className="text-[var(--color-foreground)]/30 mb-1.5">content</div>
+            <div className="bg-[var(--color-background)] border border-[var(--color-border)]/20 p-3 text-[var(--color-foreground)]/70 break-all whitespace-pre-wrap">
+              {msg.content}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DetailRow({ label, mono, children }: { label: string; mono?: boolean; children: React.ReactNode }) {
+  return (
+    <div className="flex gap-3">
+      <span className="text-[var(--color-foreground)]/30 shrink-0 w-24 text-right">{label}</span>
+      <div className={mono ? "font-mono" : ""}>{children}</div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------
 // Shared components
 // ------------------------------------------------------------------
 
@@ -851,7 +962,7 @@ function EventDot({ type }: { type: string }) {
   return <span className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 mt-1 ${color}`} />;
 }
 
-function MessageRow({ msg }: { msg: LimeMessage }) {
+function MessageRow({ msg, onSelect }: { msg: LimeMessage; onSelect: () => void }) {
   const timeLeft = formatTimeLeft(msg);
   const elapsed = Date.now() / 1000 - msg.timestamp;
   const isExpiring = msg.ttl - elapsed < 120;
@@ -884,12 +995,13 @@ function MessageRow({ msg }: { msg: LimeMessage }) {
         )}
       </div>
       <div className="shrink-0 w-24 text-right">
-        <span
-          className="text-[9px] text-[var(--color-foreground)]/15 cursor-help"
-          title={`pow: ${msg.pow_hash}\nnonce: ${msg.nonce}`}
+        <button
+          onClick={onSelect}
+          className="text-[9px] text-[var(--color-foreground)]/25 hover:text-[var(--color-lime)] transition-colors cursor-pointer font-mono"
+          title="view proof details"
         >
           {truncateHash(msg.pow_hash || "")}
-        </span>
+        </button>
       </div>
       <div className="shrink-0 w-14 text-right">
         <span
