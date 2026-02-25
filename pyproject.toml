@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "limes-cli"
+version = "0.3.0"
+description = "limes — anonymous ephemeral broadcast network"
+requires-python = ">=3.10"
+dependencies = [
+    "pynacl>=1.5.0",
+    "websockets>=13.0",
+    "web3>=7.0.0",
+    "windows-curses; sys_platform == 'win32'",
+]
+
+[tool.setuptools.packages.find]
+include = ["lime*"]
+
+[project.scripts]
+limes = "lime.app:main"

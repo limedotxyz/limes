@@ -1,0 +1,38 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-background: #0a0a0a;
+  --color-foreground: #e0e0e0;
+  --color-lime: #39ff14;
+  --color-lime-dim: #2ecc10;
+  --color-brown: #8B6914;
+  --color-panel: #111111;
+  --color-border: #222222;
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-mono), ui-monospace, monospace;
+}
+
+::selection {
+  background: var(--color-lime);
+  color: #000;
+}
+
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes typewriter {
+  from { width: 0; }
+  to { width: 100%; }
+}

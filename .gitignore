@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+*.egg
+*.whl
+
+# Build artifacts
+build/
+dist/
+*.spec
+
+# PyInstaller
+*.exe
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Secrets — NEVER commit these
+.env
+.env.*
+wallet.json
+identity.json
+
+# Node (frontend handled by frontend/.gitignore)
+node_modules/
