@@ -479,7 +479,8 @@ def main():
         relay_port = int(args.address) if args.address else 4210
         w = load_wallet()
         relay_wallet = w[0] if w else None
-        relay_main(port=relay_port, wallet=relay_wallet)
+        enable_scanner = "--scanner" in sys.argv or "-s" in sys.argv
+        relay_main(port=relay_port, wallet=relay_wallet, scanner=enable_scanner)
         return
 
     if args.command == "scanner":

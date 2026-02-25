@@ -262,7 +262,8 @@ async def _handle_scanner(ws):
         _scanners.discard(ws)
 
 
-async def run_relay(host: str = "0.0.0.0", port: int | None = None, wallet: str | None = None):
+async def run_relay(host: str = "0.0.0.0", port: int | None = None, wallet: str | None = None,
+                    enable_scanner: bool = False):
     import os
     if port is None:
         port = int(os.environ.get("PORT", DEFAULT_PORT))
@@ -290,6 +291,15 @@ async def run_relay(host: str = "0.0.0.0", port: int | None = None, wallet: str 
         print(f"  relay wallet: {wallet}")
         print()
 
+    if enable_scanner:
+        from lime.scanner import run_scanner
+        from lime.config import RELAY_SERVERS
+        scanner_port = port + 1
+        relay_url = f"ws://localhost:{port}"
+        print(f"  scanner enabled on ws://{host}:{scanner_port}")
+        print()
+        asyncio.create_task(run_scanner(relay_url=relay_url, scanner_port=scanner_port))
+
     ws_kwargs: dict = {"max_size": MAX_MSG_BYTES}
     async with serve(_handler, host, port, **ws_kwargs):
         while True:
@@ -297,9 +307,11 @@ async def run_relay(host: str = "0.0.0.0", port: int | None = None, wallet: str 
             print(f"  [{len(_clients)} peers | {len(_scanners)} scanners | {_stats['total_messages']} msgs forwarded]")
 
 
-def main(port: int = DEFAULT_PORT, wallet: str | None = None):
-    asyncio.run(run_relay(port=port, wallet=wallet))
+def main(port: int = DEFAULT_PORT, wallet: str | None = None, scanner: bool = False):
+    asyncio.run(run_relay(port=port, wallet=wallet, enable_scanner=scanner))
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    scanner_flag = "--scanner" in sys.argv or "-s" in sys.argv
+    main(scanner=scanner_flag)
