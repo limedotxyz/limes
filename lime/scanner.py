@@ -11,7 +11,7 @@ Architecture:
                                             v
                                         browser (limescan.xyz)
 
-Run with: lime scanner [--relay ws://relay:4210] [--port 3001]
+Run with: limes relay (scanner is embedded)
 """
 
 import asyncio
@@ -66,7 +66,7 @@ async def _broadcast_to_browsers(event: dict):
         _browser_clients.discard(ws)
 
 
-async def _handle_browser(ws):
+async def handle_browser(ws):
     _browser_clients.add(ws)
     try:
         now = time.time()
@@ -92,17 +92,13 @@ async def _handle_browser(ws):
         _browser_clients.discard(ws)
 
 
-async def run_scanner(
-    relay_url: str,
-    scanner_port: int = DEFAULT_SCANNER_PORT,
-    scanner_host: str = "0.0.0.0",
-):
-    global _relay_wallet
-    if websockets is None:
-        print("ERROR: websockets package required.")
-        return
+async def start_relay_loop(relay_url: str):
+    """Connect to a relay as a full peer and decrypt messages.
 
-    _stats["start_time"] = time.time()
+    This is the scanner's core logic, separated so the relay can embed it
+    without starting a second WebSocket server.
+    """
+    global _relay_wallet
 
     sk, vk = generate_keypair()
     curve_private = signing_to_curve_private(sk)
@@ -110,148 +106,158 @@ async def run_scanner(
     curve_pk_hex = curve_public.encode().hex()
     session_id = str(uuid.uuid4())
 
-    room_key: list[bytes | None] = [None]  # mutable container
+    room_key: list[bytes | None] = [None]
     room_key_event = asyncio.Event()
     seen_ids: set[str] = set()
 
-    async def relay_loop():
-        global _relay_wallet
+    while True:
+        try:
+            async with websockets.connect(relay_url) as ws:
+                await ws.send(json.dumps({
+                    "type": "hello",
+                    "session": session_id,
+                    "curve_pk": curve_pk_hex,
+                }))
 
-        while True:
-            try:
-                async with websockets.connect(relay_url) as ws:
-                    await ws.send(json.dumps({
-                        "type": "hello",
-                        "session": session_id,
-                        "curve_pk": curve_pk_hex,
-                    }))
+                async for raw in ws:
+                    try:
+                        data = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
 
-                    async for raw in ws:
-                        try:
-                            data = json.loads(raw)
-                        except json.JSONDecodeError:
-                            continue
+                    t = data.get("type")
 
-                        t = data.get("type")
+                    if t == "relay_peers":
+                        peers = data.get("peers", [])
+                        _stats["peers_online"] = data.get("count", len(peers))
+                        if peers and room_key[0] is None:
+                            await ws.send(json.dumps({
+                                "type": "key_request",
+                                "session": session_id,
+                                "curve_pk": curve_pk_hex,
+                            }))
+                        elif not peers:
+                            room_key[0] = generate_room_key()
+                            room_key_event.set()
 
-                        if t == "relay_peers":
-                            peers = data.get("peers", [])
-                            _stats["peers_online"] = data.get("count", len(peers))
-                            if peers and room_key[0] is None:
+                    elif t == "relay_join":
+                        _stats["peers_online"] += 1
+                        peer_curve_pk = data.get("curve_pk", "")
+                        peer_session = data.get("session", "")
+                        await _broadcast_to_browsers({
+                            "type": "peer_join",
+                            "peers_online": _stats["peers_online"],
+                            "ts": data.get("ts", time.time()),
+                        })
+                        if room_key[0] and peer_curve_pk:
+                            try:
+                                rpk = curve_public_from_hex(peer_curve_pk)
+                                sealed = seal_room_key(room_key[0], rpk)
                                 await ws.send(json.dumps({
-                                    "type": "key_request",
-                                    "session": session_id,
-                                    "curve_pk": curve_pk_hex,
+                                    "type": "key_share",
+                                    "to": peer_session,
+                                    "sealed": sealed,
                                 }))
-                            elif not peers:
-                                room_key[0] = generate_room_key()
+                            except Exception:
+                                pass
+
+                    elif t == "relay_leave":
+                        _stats["peers_online"] = max(0, _stats["peers_online"] - 1)
+                        await _broadcast_to_browsers({
+                            "type": "peer_leave",
+                            "peers_online": _stats["peers_online"],
+                            "ts": time.time(),
+                        })
+
+                    elif t == "key_share":
+                        if room_key[0] is None:
+                            try:
+                                sealed = data.get("sealed", "")
+                                room_key[0] = unseal_room_key(sealed, curve_private)
                                 room_key_event.set()
+                            except Exception:
+                                pass
 
-                        elif t == "relay_join":
-                            _stats["peers_online"] += 1
-                            peer_curve_pk = data.get("curve_pk", "")
-                            peer_session = data.get("session", "")
-                            await _broadcast_to_browsers({
-                                "type": "peer_join",
-                                "peers_online": _stats["peers_online"],
-                                "ts": data.get("ts", time.time()),
-                            })
-                            if room_key[0] and peer_curve_pk:
-                                try:
-                                    rpk = curve_public_from_hex(peer_curve_pk)
-                                    sealed = seal_room_key(room_key[0], rpk)
-                                    await ws.send(json.dumps({
-                                        "type": "key_share",
-                                        "to": peer_session,
-                                        "sealed": sealed,
-                                    }))
-                                except Exception:
-                                    pass
+                    elif t == "key_request":
+                        peer_session = data.get("session", "")
+                        peer_curve_pk = data.get("curve_pk", "")
+                        if room_key[0] and peer_curve_pk and peer_session != session_id:
+                            try:
+                                rpk = curve_public_from_hex(peer_curve_pk)
+                                sealed = seal_room_key(room_key[0], rpk)
+                                await ws.send(json.dumps({
+                                    "type": "key_share",
+                                    "to": peer_session,
+                                    "sealed": sealed,
+                                }))
+                            except Exception:
+                                pass
 
-                        elif t == "relay_leave":
-                            _stats["peers_online"] = max(0, _stats["peers_online"] - 1)
-                            await _broadcast_to_browsers({
-                                "type": "peer_leave",
-                                "peers_online": _stats["peers_online"],
-                                "ts": time.time(),
-                            })
+                    elif t == "msg":
+                        _stats["total_messages"] += 1
+                        if room_key[0]:
+                            try:
+                                envelope = data.get("envelope", "")
+                                plaintext = decrypt_message(envelope, room_key[0])
+                                msg_data = json.loads(plaintext)
+                                msg = Message.from_dict(msg_data)
 
-                        elif t == "key_share":
-                            if room_key[0] is None:
-                                try:
-                                    sealed = data.get("sealed", "")
-                                    room_key[0] = unseal_room_key(sealed, curve_private)
-                                    room_key_event.set()
-                                except Exception:
-                                    pass
+                                if msg.id in seen_ids:
+                                    continue
+                                seen_ids.add(msg.id)
+                                if msg.is_expired:
+                                    continue
+                                if not verify_pow(msg.pow_payload(), msg.nonce, msg.pow_hash, POW_DIFFICULTY):
+                                    continue
+                                if not verify(msg.author_pubkey, msg.signature, msg.signable_payload()):
+                                    continue
 
-                        elif t == "key_request":
-                            peer_session = data.get("session", "")
-                            peer_curve_pk = data.get("curve_pk", "")
-                            if room_key[0] and peer_curve_pk and peer_session != session_id:
-                                try:
-                                    rpk = curve_public_from_hex(peer_curve_pk)
-                                    sealed = seal_room_key(room_key[0], rpk)
-                                    await ws.send(json.dumps({
-                                        "type": "key_share",
-                                        "to": peer_session,
-                                        "sealed": sealed,
-                                    }))
-                                except Exception:
-                                    pass
+                                md = msg.to_dict()
+                                _recent_messages.append(md)
 
-                        elif t == "msg":
-                            _stats["total_messages"] += 1
-                            if room_key[0]:
-                                try:
-                                    envelope = data.get("envelope", "")
-                                    plaintext = decrypt_message(envelope, room_key[0])
-                                    msg_data = json.loads(plaintext)
-                                    msg = Message.from_dict(msg_data)
+                                author = f"{msg.author_name}#{msg.author_tag}"
+                                _active_authors[author] = time.time()
 
-                                    if msg.id in seen_ids:
-                                        continue
-                                    seen_ids.add(msg.id)
-                                    if msg.is_expired:
-                                        continue
-                                    if not verify_pow(msg.pow_payload(), msg.nonce, msg.pow_hash, POW_DIFFICULTY):
-                                        continue
-                                    if not verify(msg.author_pubkey, msg.signature, msg.signable_payload()):
-                                        continue
+                                now = time.time()
+                                _recent_messages[:] = [
+                                    m for m in _recent_messages
+                                    if now - m["timestamp"] < m.get("ttl", MESSAGE_TTL)
+                                ]
+                                expired_authors = [
+                                    a for a, ts in _active_authors.items()
+                                    if now - ts > MESSAGE_TTL
+                                ]
+                                for a in expired_authors:
+                                    del _active_authors[a]
 
-                                    md = msg.to_dict()
-                                    _recent_messages.append(md)
+                                await _broadcast_to_browsers({
+                                    "type": "message",
+                                    "data": md,
+                                    "relayed_at": time.time(),
+                                })
+                            except Exception:
+                                pass
 
-                                    author = f"{msg.author_name}#{msg.author_tag}"
-                                    _active_authors[author] = time.time()
+                    elif t == "relay_wallet":
+                        _relay_wallet = data.get("address")
 
-                                    now = time.time()
-                                    _recent_messages[:] = [
-                                        m for m in _recent_messages
-                                        if now - m["timestamp"] < m.get("ttl", MESSAGE_TTL)
-                                    ]
-                                    expired_authors = [
-                                        a for a, ts in _active_authors.items()
-                                        if now - ts > MESSAGE_TTL
-                                    ]
-                                    for a in expired_authors:
-                                        del _active_authors[a]
+        except Exception:
+            pass
 
-                                    await _broadcast_to_browsers({
-                                        "type": "message",
-                                        "data": md,
-                                        "relayed_at": time.time(),
-                                    })
-                                except Exception:
-                                    pass
+        await asyncio.sleep(5)
 
-                        elif t == "relay_wallet":
-                            _relay_wallet = data.get("address")
 
-            except Exception:
-                pass
+async def run_scanner(
+    relay_url: str,
+    scanner_port: int = DEFAULT_SCANNER_PORT,
+    scanner_host: str = "0.0.0.0",
+):
+    """Standalone scanner mode: runs its own WebSocket server for browsers."""
+    if websockets is None:
+        print("ERROR: websockets package required.")
+        return
 
-            await asyncio.sleep(5)
+    _stats["start_time"] = time.time()
 
     print()
     print("  limes scanner")
@@ -263,9 +269,9 @@ async def run_scanner(
     print("  relay operators cannot see message content.")
     print()
 
-    asyncio.create_task(relay_loop())
+    asyncio.create_task(start_relay_loop(relay_url))
 
-    async with serve(_handle_browser, scanner_host, scanner_port):
+    async with serve(handle_browser, scanner_host, scanner_port):
         while True:
             await asyncio.sleep(30)
             now = time.time()

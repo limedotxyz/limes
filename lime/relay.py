@@ -17,7 +17,7 @@ HARDENING:
 
 The relay is a dumb pipe. It earns $LIME for forwarding traffic.
 
-Run with: lime relay
+Run with: limes relay
 """
 
 import asyncio
@@ -52,6 +52,7 @@ _stats = {
     "start_time": 0,
 }
 _relay_wallet: str | None = None
+_scanner_enabled = False
 
 
 async def _broadcast_to_scanners(event: dict):
@@ -95,9 +96,14 @@ class _RateLimiter:
 
 async def _handler(ws):
     path = getattr(ws, "request", None)
-    if path and hasattr(path, "path") and path.path == "/scan":
-        await _handle_scanner(ws)
-        return
+    if path and hasattr(path, "path"):
+        if path.path == "/scan":
+            await _handle_scanner(ws)
+            return
+        if path.path == "/live" and _scanner_enabled:
+            from lime.scanner import handle_browser
+            await handle_browser(ws)
+            return
 
     if len(_clients) >= MAX_PEERS:
         try:
@@ -292,13 +298,14 @@ async def run_relay(host: str = "0.0.0.0", port: int | None = None, wallet: str 
         print()
 
     if enable_scanner:
-        from lime.scanner import run_scanner
-        from lime.config import RELAY_SERVERS
-        scanner_port = port + 1
+        global _scanner_enabled
+        _scanner_enabled = True
+        from lime.scanner import start_relay_loop, _stats as scanner_stats
+        scanner_stats["start_time"] = time.time()
         relay_url = f"ws://localhost:{port}"
-        print(f"  scanner enabled on ws://{host}:{scanner_port}")
+        print(f"  scanner enabled on ws://{host}:{port}/live")
         print()
-        asyncio.create_task(run_scanner(relay_url=relay_url, scanner_port=scanner_port))
+        asyncio.create_task(start_relay_loop(relay_url))
 
     ws_kwargs: dict = {"max_size": MAX_MSG_BYTES}
     async with serve(_handler, host, port, **ws_kwargs):

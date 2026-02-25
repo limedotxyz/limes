@@ -51,11 +51,11 @@ def _fail(msg: str):
 
 
 # ------------------------------------------------------------------
-# Install lime to PATH
+# Install limes to PATH
 # ------------------------------------------------------------------
 
 def _install_to_path():
-    """Copy the running exe to a directory on PATH so 'lime' works globally."""
+    """Copy the running exe to a directory on PATH so 'limes' works globally."""
     if not getattr(sys, "frozen", False):
         return
 
@@ -196,7 +196,7 @@ del "%~f0" > nul 2>&1
 # ------------------------------------------------------------------
 
 def _ensure_firewall_rule():
-    """Add a Windows Firewall rule to allow lime TCP traffic."""
+    """Add a Windows Firewall rule to allow limes TCP traffic."""
     rule_name = "limes P2P"
     try:
         check = subprocess.run(
@@ -209,7 +209,7 @@ def _ensure_firewall_rule():
     except Exception:
         pass
 
-    _ok("adding firewall rule for lime...")
+    _ok("adding firewall rule for limes...")
     for direction in ("in", "out"):
         try:
             subprocess.run(
@@ -270,7 +270,7 @@ def _cmd_setup(then_open: bool = False):
     _ensure_firewall_rule()
 
     # -- 4. Install to PATH --
-    _step(4, total, "installing lime command...")
+    _step(4, total, "installing limes command...")
     _install_to_path()
 
     # -- 5. Done --
@@ -280,7 +280,7 @@ def _cmd_setup(then_open: bool = False):
     print("       peers on your LAN are discovered via multicast.")
     print()
     if then_open:
-        print('  opening lime...')
+        print('  opening limes...')
         print()
     else:
         print('  run "limes" to start.')

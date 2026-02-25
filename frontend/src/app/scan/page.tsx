@@ -3,7 +3,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 
-const SCANNER_WS = process.env.NEXT_PUBLIC_SCANNER_WS || "wss://scanner-production-652c.up.railway.app";
+const SCANNER_WS = process.env.NEXT_PUBLIC_SCANNER_WS || "wss://relay-production-e4f7.up.railway.app/live";
 const LIME_CONTRACT = process.env.NEXT_PUBLIC_LIME_CONTRACT || "";
 
 interface LimeMessage {
