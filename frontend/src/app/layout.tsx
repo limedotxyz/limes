@@ -13,16 +13,26 @@ export const metadata: Metadata = {
   description: "decentralized terminal chat. messages vanish after 24 minutes. proof-of-work. $LIME token rewards. no servers, no accounts, no history.",
   metadataBase: new URL("https://lime.sh"),
   openGraph: {
-    title: "limes",
-    description: "anonymous ephemeral broadcast network. messages vanish after 24 minutes.",
+    title: "limes — anonymous ephemeral broadcast network for the terminal",
+    description: "decentralized P2P chat where messages vanish after 24 minutes. proof-of-work spam prevention, $LIME token rewards for relay operators, end-to-end encrypted. no servers, no accounts, no history.",
     url: "https://lime.sh",
     siteName: "limes",
     type: "website",
+    images: [
+      {
+        url: "/og-image.png",
+        width: 1200,
+        height: 630,
+        alt: "limes — anonymous ephemeral broadcast network",
+        type: "image/png",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
-    title: "limes",
-    description: "anonymous ephemeral broadcast network. messages vanish after 24 minutes.",
+    title: "limes — anonymous ephemeral broadcast network for the terminal",
+    description: "decentralized P2P chat where messages vanish after 24 minutes. proof-of-work spam prevention, $LIME token rewards for relay operators, end-to-end encrypted.",
+    images: ["/og-image.png"],
   },
 };
 
