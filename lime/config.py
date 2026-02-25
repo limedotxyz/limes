@@ -1,6 +1,6 @@
 from pathlib import Path
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 
 LIME_DIR = Path.home() / ".lime"
 IDENTITY_FILE = LIME_DIR / "identity.json"
