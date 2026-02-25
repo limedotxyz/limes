@@ -262,7 +262,10 @@ async def _handle_scanner(ws):
         _scanners.discard(ws)
 
 
-async def run_relay(host: str = "0.0.0.0", port: int = DEFAULT_PORT, wallet: str | None = None):
+async def run_relay(host: str = "0.0.0.0", port: int | None = None, wallet: str | None = None):
+    import os
+    if port is None:
+        port = int(os.environ.get("PORT", DEFAULT_PORT))
     global _relay_wallet
     if serve is None:
         print("ERROR: websockets package required. Install with: pip install websockets")

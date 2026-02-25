@@ -273,7 +273,10 @@ async def run_scanner(
             print(f"  [scanner: {len(_browser_clients)} browsers | {active} active msgs | {_stats['total_messages']} total]")
 
 
-def main(relay_url: str | None = None, port: int = DEFAULT_SCANNER_PORT):
+def main(relay_url: str | None = None, port: int | None = None):
+    import os
+    if port is None:
+        port = int(os.environ.get("PORT", DEFAULT_SCANNER_PORT))
     if not relay_url:
         relay_url = RELAY_SERVERS[0] if RELAY_SERVERS else "ws://localhost:4210"
     asyncio.run(run_scanner(relay_url=relay_url, scanner_port=port))
