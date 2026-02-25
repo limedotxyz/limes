@@ -17,9 +17,6 @@
   "engines": {
     "node": "22.x"
   },
-  "overrides": {
-    "picomatch": "^4.0.3"
-  },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
