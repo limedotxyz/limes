@@ -1,6 +1,6 @@
 from pathlib import Path
 
-VERSION = "0.3.0"
+VERSION = "1.0.0"
 
 LIME_DIR = Path.home() / ".lime"
 IDENTITY_FILE = LIME_DIR / "identity.json"
@@ -29,7 +29,7 @@ RELAY_SERVERS = [
 BOOTSTRAP_PEERS: list[tuple[str, int]] = []
 
 # Auto-update URL — points to GitHub Releases
-UPDATE_BASE_URL = "https://github.com/limes-network/limes/releases/latest/download"
+UPDATE_BASE_URL = "https://github.com/limedotxyz/limes/releases/latest/download"
 
 # Scanner port for the limescan web server
 SCANNER_PORT = 4211

@@ -5,7 +5,7 @@ export const metadata: Metadata = {
   description: "technical documentation for limes: architecture, encryption, boards, relay protocol, proof-of-work, $LIME token, staking, and security model.",
 };
 
-const GITHUB_URL = "https://github.com/limes-network/limes";
+const GITHUB_URL = "https://github.com/limedotxyz/limes";
 const CLANKER_URL = "#";
 
 function H2({ id, children }: { id: string; children: React.ReactNode }) {

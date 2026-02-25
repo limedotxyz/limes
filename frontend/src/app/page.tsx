@@ -15,7 +15,7 @@ const LIME_ART = `
      ████
 `.trim();
 
-const GITHUB_URL = "https://github.com/limes-network/limes";
+const GITHUB_URL = "https://github.com/limedotxyz/limes";
 const CLANKER_URL = "#"; // replace with clanker launch URL once live
 const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_LIME_CONTRACT || "";
 

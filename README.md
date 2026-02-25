@@ -6,7 +6,7 @@ decentralized terminal chat with boards and threads. messages self-destruct afte
 
 ## install
 
-download `limes.exe` from [releases](https://github.com/limedotxyz/limes/releases) and run it.
+download `limes.exe` from [releases](https://github.com/limedotxyz/limes/releases/latest) and run it.
 
 ```
 limes setup
