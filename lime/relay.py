@@ -312,6 +312,4 @@ def main(port: int = DEFAULT_PORT, wallet: str | None = None, scanner: bool = Fa
 
 
 if __name__ == "__main__":
-    import sys
-    scanner_flag = "--scanner" in sys.argv or "-s" in sys.argv
-    main(scanner=scanner_flag)
+    main(scanner=True)

@@ -479,15 +479,13 @@ def main():
         relay_port = int(args.address) if args.address else 4210
         w = load_wallet()
         relay_wallet = w[0] if w else None
-        enable_scanner = "--scanner" in sys.argv or "-s" in sys.argv
-        relay_main(port=relay_port, wallet=relay_wallet, scanner=enable_scanner)
+        relay_main(port=relay_port, wallet=relay_wallet, scanner=True)
         return
 
     if args.command == "scanner":
         from lime.scanner import main as scanner_main
-        from lime.config import SCANNER_PORT
         relay_url = args.address if args.address else None
-        scanner_main(relay_url=relay_url, port=SCANNER_PORT)
+        scanner_main(relay_url=relay_url)
         return
 
     if args.command == "setup":
