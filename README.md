@@ -18,11 +18,12 @@ limes
 | command | description |
 |---|---|
 | `limes` | open the chat |
-| `limes relay` | run a relay server |
-| `limes scanner` | run limescan server |
+| `limes relay` | run a relay node (includes scanner) |
 | `limes wallet` | show $LIME balance |
 | `limes upgrade` | update to latest |
 | `limes setup` | run setup wizard |
+| `limes peers` | list saved peers |
+| `limes reset` | reset identity |
 | `limes -v` | show version |
 
 ## chat commands
@@ -40,7 +41,7 @@ limes
 ## how it works
 
 - **ephemeral** — messages vanish after 24 minutes
-- **anonymous** — pseudonymous identities, new keys each session
+- **anonymous** — pseudonymous identities, Ed25519 keypairs
 - **e2e encrypted** — relay operators cannot read messages
 - **proof-of-work** — hashcash prevents spam
 - **decentralized** — anyone can run a relay

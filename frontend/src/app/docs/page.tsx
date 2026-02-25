@@ -114,8 +114,7 @@ export default function DocsPage() {
         <P>the network is composed of three types of participants:</P>
         <div className="border border-[var(--color-border)] bg-[var(--color-panel)] p-4 text-xs space-y-3 my-4">
           <div><Lime>peers</Lime> <Dim>— run the limes TUI, send and receive messages in boards and threads</Dim></div>
-          <div><Lime>relays</Lime> <Dim>— forward encrypted traffic between peers, stake $LIME and earn rewards, cannot read anything</Dim></div>
-          <div><Lime>scanners</Lime> <Dim>— full peers that serve a web dashboard (limescan) for live viewing</Dim></div>
+          <div><Lime>relays</Lime> <Dim>— forward encrypted traffic between peers, stake $LIME and earn rewards, cannot read content. includes an embedded scanner for the limescan dashboard</Dim></div>
         </div>
 
         {/* ── ARCHITECTURE ── */}
@@ -130,8 +129,8 @@ export default function DocsPage() {
           <p>&nbsp;</p>
           <p>{"  peer A ──TCP──> peer B        (LAN, direct)"}</p>
           <p>{"  peer C ──WS───> relay ──WS──> peer D   (NAT traversal)"}</p>
-          <p>{"  scanner ──WS──> relay         (joins as a peer)"}</p>
-          <p>{"  browser ──WS──> scanner       (read-only feed)"}</p>
+          <p>{"  relay ──> embedded scanner    (decrypts messages)"}</p>
+          <p>{"  browser ──WS──> relay/live    (read-only feed)"}</p>
         </Code>
         <H3>relay servers</H3>
         <P>
@@ -144,11 +143,12 @@ export default function DocsPage() {
           on local networks, limes announces itself via UDP multicast on <Lime>239.42.42.42:4200</Lime>.
           peers that hear the announcement connect directly over TCP on port <Lime>4201</Lime>.
         </P>
-        <H3>scanner servers</H3>
+        <H3>embedded scanner</H3>
         <P>
-          a scanner is a full limes peer that also runs a WebSocket server for the limescan web dashboard.
-          it connects to a relay, participates in the key exchange, decrypts messages, and streams them
-          to connected browsers. the relay itself remains blind — only the scanner can read content.
+          every relay includes an embedded scanner — a full limes peer that participates in the key
+          exchange, decrypts messages, and streams them to the limescan web dashboard. browsers connect
+          to the relay&apos;s <Lime>/live</Lime> WebSocket path. the relay itself remains a blind pipe —
+          only the embedded scanner can read content.
         </P>
 
         {/* ── BOARDS & THREADS ── */}
@@ -283,10 +283,10 @@ export default function DocsPage() {
         <H3>relay limits</H3>
         <div className="border border-[var(--color-border)] bg-[var(--color-panel)] p-4 text-xs space-y-1 my-4">
           <TableRow label="max peers" value="500 concurrent" />
-          <TableRow label="max scanners" value="20 concurrent" />
           <TableRow label="max message size" value="64 KB" />
           <TableRow label="rate limit" value="10 messages/second per peer" />
           <TableRow label="forwarding delay" value="50-300ms random" />
+          <TableRow label="scanner path" value="/live (browser WebSocket)" />
         </div>
 
         {/* ── POW ── */}
@@ -409,8 +409,7 @@ export default function DocsPage() {
             ["limes upgrade", "auto-update to latest version"],
             ["limes wallet", "show ETH address + $LIME balance"],
             ["limes wallet --export", "reveal private key"],
-            ["limes relay [port]", "run a relay server (default 4210)"],
-            ["limes scanner [url]", "run limescan web server"],
+            ["limes relay [port]", "run a relay node with embedded scanner (default 4210)"],
             ["limes peers", "list saved peer addresses"],
             ["limes reset", "delete identity and start fresh"],
           ].map(([cmd, desc]) => (
