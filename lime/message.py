@@ -15,7 +15,7 @@ class Message:
     author_tag: str
     author_pubkey: str
     content: str
-    content_type: str       # "text" | "code"
+    content_type: str       # "text" | "code" | "file"
     timestamp: float
     ttl: int
     nonce: str
@@ -25,6 +25,9 @@ class Message:
     thread_id: str = ""
     thread_title: str = ""
     reply_to: str = ""
+    file_name: str = ""
+    file_data: str = ""     # base64
+    file_size: int = 0
 
     @property
     def is_expired(self) -> bool:
@@ -82,7 +85,7 @@ class Message:
         }, sort_keys=True).encode()
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "id": self.id,
             "prev_hash": self.prev_hash,
             "author_name": self.author_name,
@@ -100,6 +103,11 @@ class Message:
             "thread_title": self.thread_title,
             "reply_to": self.reply_to,
         }
+        if self.file_name:
+            d["file_name"] = self.file_name
+            d["file_data"] = self.file_data
+            d["file_size"] = self.file_size
+        return d
 
     def to_json(self) -> str:
         return json.dumps(self.to_dict())
@@ -123,6 +131,9 @@ class Message:
             thread_id=d.get("thread_id", ""),
             thread_title=d.get("thread_title", ""),
             reply_to=d.get("reply_to", ""),
+            file_name=d.get("file_name", ""),
+            file_data=d.get("file_data", ""),
+            file_size=d.get("file_size", 0),
         )
 
     @classmethod
@@ -172,8 +183,11 @@ def create_message(
     thread_id: str = "",
     thread_title: str = "",
     reply_to: str = "",
+    file_name: str = "",
+    file_data: str = "",
+    file_size: int = 0,
 ) -> Message:
-    if len(content) > MAX_MESSAGE_LENGTH:
+    if content_type != "file" and len(content) > MAX_MESSAGE_LENGTH:
         raise ValueError(f"Message too long ({len(content)} > {MAX_MESSAGE_LENGTH})")
 
     msg = Message(
@@ -193,6 +207,9 @@ def create_message(
         thread_id=thread_id,
         thread_title=thread_title,
         reply_to=reply_to,
+        file_name=file_name,
+        file_data=file_data,
+        file_size=file_size,
     )
 
     msg.nonce, msg.pow_hash = mine_pow(msg.pow_payload())

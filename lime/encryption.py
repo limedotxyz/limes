@@ -21,6 +21,22 @@ from nacl.utils import random as nacl_random
 ROOM_KEY_SIZE = SecretBox.KEY_SIZE  # 32 bytes
 
 
+def sign_curve_pk(signing_key: SigningKey, curve_pk_hex: str) -> str:
+    """Sign the X25519 public key with Ed25519 to prevent MITM attacks."""
+    sig = signing_key.sign(bytes.fromhex(curve_pk_hex)).signature
+    return sig.hex()
+
+
+def verify_curve_pk_sig(verify_key_hex: str, curve_pk_hex: str, sig_hex: str) -> bool:
+    """Verify that a curve public key was signed by the claimed identity."""
+    try:
+        vk = VerifyKey(bytes.fromhex(verify_key_hex))
+        vk.verify(bytes.fromhex(curve_pk_hex), bytes.fromhex(sig_hex))
+        return True
+    except Exception:
+        return False
+
+
 def generate_room_key() -> bytes:
     return nacl_random(ROOM_KEY_SIZE)
 

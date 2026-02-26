@@ -65,10 +65,15 @@ const TOC = [
   { id: "boards", label: "boards & threads" },
   { id: "identity", label: "identity & anonymity" },
   { id: "encryption", label: "end-to-end encryption" },
+  { id: "dms", label: "direct messages" },
+  { id: "files", label: "file sharing" },
   { id: "relay", label: "relay protocol" },
+  { id: "registry", label: "relay registry (on-chain)" },
   { id: "pow", label: "proof-of-work" },
   { id: "token", label: "$LIME token & vault" },
   { id: "security", label: "security model" },
+  { id: "webclient", label: "web client" },
+  { id: "platforms", label: "cross-platform" },
   { id: "commands", label: "CLI & chat commands" },
   { id: "faq", label: "FAQ" },
 ];
@@ -260,6 +265,64 @@ export default function DocsPage() {
           this prevents timing-based traffic analysis.
         </P>
 
+        {/* ── DIRECT MESSAGES ── */}
+        <H2 id="dms">direct messages</H2>
+        <P>
+          limes supports 1-on-1 encrypted direct messages. DMs are sent through the relay but forwarded
+          only to the target session — other peers never see them.
+        </P>
+        <H3>how to send a DM</H3>
+        <P>
+          use <Lime>/dm @name message</Lime> in the TUI. press <Lime>d</Lime> in feed mode to toggle
+          the DM panel and view received messages. DMs are ephemeral (24-minute TTL) like regular
+          messages.
+        </P>
+        <H3>encryption</H3>
+        <P>
+          DMs are encrypted with the shared room key (NaCl SecretBox), same as regular messages. the
+          relay forwards them only to the target session using the <Lime>dm</Lime> message type. DMs do
+          not appear on limescan — the scanner ignores them entirely.
+        </P>
+        <Code>
+          <p><Dim>{"// DM flow"}</Dim></p>
+          <p>&nbsp;</p>
+          <p>{"  sender:  /dm @alice hello"}</p>
+          <p>{"  → encrypts with room key"}</p>
+          <p>{"  → sends { type: 'dm', to: session_id, envelope }"}</p>
+          <p>{"  relay:   forwards ONLY to target session"}</p>
+          <p>{"  alice:   decrypts, sees in DM panel"}</p>
+          <p>{"  scanner: ignores DM type entirely"}</p>
+        </Code>
+
+        {/* ── FILE SHARING ── */}
+        <H2 id="files">file sharing</H2>
+        <P>
+          share small files (images, text, data) directly through the limes network. files are
+          base64-encoded and included in the encrypted message payload.
+        </P>
+        <div className="border border-[var(--color-border)] bg-[var(--color-panel)] p-4 text-xs space-y-1 my-4">
+          <TableRow label="max file size" value="~45 KB (raw)" />
+          <TableRow label="encoding" value="base64 within 64KB relay limit" />
+          <TableRow label="persistence" value="ephemeral — gone after 24 min" />
+          <TableRow label="encryption" value="same as messages (SecretBox)" />
+        </div>
+        <H3>commands</H3>
+        <P>
+          use <Lime>/file path/to/image.png</Lime> to share a file. recipients see a notification with
+          the filename and size. use <Lime>/save #num [path]</Lime> to save a received file to disk.
+        </P>
+        <Code>
+          <p><Dim>{"// sharing a file"}</Dim></p>
+          <p>&nbsp;</p>
+          <p>{"  sender:  /file screenshot.png"}</p>
+          <p>{"  → reads file, base64-encodes (~33% larger)"}</p>
+          <p>{"  → sends as content_type: 'file' message"}</p>
+          <p>{"  → encrypted + PoW like any message"}</p>
+          <p>&nbsp;</p>
+          <p>{"  receiver sees: [file: screenshot.png (12KB)] /save #1"}</p>
+          <p>{"  receiver types: /save #1 ~/downloads/"}</p>
+        </Code>
+
         {/* ── RELAY PROTOCOL ── */}
         <H2 id="relay">relay protocol</H2>
         <P>
@@ -268,9 +331,10 @@ export default function DocsPage() {
         </P>
         <H3>client → relay</H3>
         <div className="border border-[var(--color-border)] bg-[var(--color-panel)] p-4 text-xs space-y-3 my-4 overflow-x-auto">
-          <div><Lime>hello</Lime> <Dim>— register with random session UUID + X25519 public key</Dim></div>
+          <div><Lime>hello</Lime> <Dim>— register with session UUID + X25519 key + Ed25519 signature (MITM-protected)</Dim></div>
           <div><Lime>msg</Lime> <Dim>— encrypted message envelope (relay cannot read)</Dim></div>
-          <div><Lime>key_request</Lime> <Dim>— ask peers for the room key</Dim></div>
+          <div><Lime>dm</Lime> <Dim>— encrypted DM to a specific session (relay forwards to target only)</Dim></div>
+          <div><Lime>key_request</Lime> <Dim>— ask peers for the room key (signed)</Dim></div>
           <div><Lime>key_share</Lime> <Dim>— send sealed room key to a specific session</Dim></div>
         </div>
         <H3>relay → client</H3>
@@ -288,6 +352,42 @@ export default function DocsPage() {
           <TableRow label="forwarding delay" value="50-300ms random" />
           <TableRow label="scanner path" value="/live (browser WebSocket)" />
         </div>
+
+        {/* ── RELAY REGISTRY ── */}
+        <H2 id="registry">relay registry (on-chain)</H2>
+        <P>
+          the <Lime>LimesRegistry</Lime> smart contract on Base L2 maintains a decentralized list of
+          active relay servers. relay operators who are staked in the LimesVault can register their
+          WebSocket URL on-chain.
+        </P>
+        <H3>how it works</H3>
+        <P>
+          when a limes client starts, it queries the LimesRegistry contract to fetch the current relay
+          list. if the contract call fails (e.g. no internet, contract not deployed yet), it falls back
+          to hardcoded default relays. the relay list is cached locally for 5 minutes.
+        </P>
+        <Code>
+          <p><Dim>{"// on-chain relay discovery"}</Dim></p>
+          <p>&nbsp;</p>
+          <p>{"  client starts"}</p>
+          <p>{"  → calls LimesRegistry.getRelays() on Base"}</p>
+          <p>{"  → gets [{operator, url, registeredAt}, ...]"}</p>
+          <p>{"  → connects to each relay via WebSocket"}</p>
+          <p>{"  → falls back to hardcoded list on failure"}</p>
+        </Code>
+        <H3>contract functions</H3>
+        <div className="border border-[var(--color-border)] bg-[var(--color-panel)] p-4 text-xs space-y-3 my-4 overflow-x-auto">
+          <div><Lime>registerRelay(url)</Lime> <Dim>— register your relay (must be staked ≥ 250k LIME)</Dim></div>
+          <div><Lime>removeRelay()</Lime> <Dim>— unregister your relay</Dim></div>
+          <div><Lime>updateRelay(url)</Lime> <Dim>— change your relay URL</Dim></div>
+          <div><Lime>getRelays()</Lime> <Dim>— get all registered relays</Dim></div>
+        </div>
+        <H3>limescan relay list</H3>
+        <P>
+          the <a href="https://limescan.xyz" className="text-[var(--color-lime)] hover:underline">limescan</a>{" "}
+          dashboard shows all registered relays with real-time health checks. each relay has a green
+          pulsing dot when online, and a copy button to get the <Lime>limes connect</Lime> command.
+        </P>
 
         {/* ── POW ── */}
         <H2 id="pow">proof-of-work</H2>
@@ -363,11 +463,14 @@ export default function DocsPage() {
           {[
             "message content is E2E encrypted through relays (NaCl SecretBox)",
             "relay operators cannot read messages, see names, or link IPs to identities",
+            "authenticated key exchange — X25519 keys are signed with Ed25519 to prevent MITM attacks",
             "every message has an Ed25519 signature — forgery is impossible",
             "PoW prevents spam flooding",
             "messages expire after 24 minutes — no permanent record",
             "relay hardened: connection limits, rate limits, max message size",
             "timing obfuscation (random delay) prevents traffic analysis at relay",
+            "DMs are forwarded only to the target session — other peers never see them",
+            "message sync on reconnect — recover missed messages within 24-min window",
           ].map((t, i) => (
             <div key={i} className="flex gap-3">
               <Lime>+</Lime>
@@ -381,7 +484,6 @@ export default function DocsPage() {
             "relay operators can see your IP address at the TCP level (use VPN or Tor to hide)",
             "LAN peers can see each other's local IPs (same network only)",
             "ISPs can see that you connected to a relay server (metadata, not content)",
-            "SealedBox key exchange is not authenticated — a malicious relay could theoretically MITM the room key exchange (requires actively modifying relay code)",
             "pseudonyms are not unique across sessions — anyone can pick any name",
           ].map((t, i) => (
             <div key={i} className="flex gap-3">
@@ -390,12 +492,64 @@ export default function DocsPage() {
             </div>
           ))}
         </div>
+        <H3>authenticated key exchange (MITM fix)</H3>
+        <P>
+          during the <Lime>hello</Lime> handshake, each peer signs their X25519 public key with their
+          Ed25519 identity key. recipients verify this signature before accepting the key. this prevents
+          a malicious relay from swapping keys (man-in-the-middle attack).
+        </P>
+        <Code>
+          <p><Dim>{"// authenticated key exchange"}</Dim></p>
+          <p>&nbsp;</p>
+          <p>{"  peer A: signs curve_pk with Ed25519 → curve_pk_sig"}</p>
+          <p>{"  peer A: sends { hello, curve_pk, curve_pk_sig, verify_key }"}</p>
+          <p>{"  peer B: receives, verifies Ed25519 signature"}</p>
+          <p>{"  peer B: only accepts curve_pk if signature is valid"}</p>
+          <p>{"  → relay cannot swap keys without detection"}</p>
+        </Code>
         <H3>threat model</H3>
         <P>
           limes&apos;s privacy model is similar to Bitcoin: transactions (messages) are public, identities are
           pseudonymous, and nodes (relays) see connecting IPs but cannot determine which IP sent which
           message thanks to gossip propagation and timing obfuscation. for stronger IP privacy,
           route through Tor.
+        </P>
+
+        {/* ── WEB CLIENT ── */}
+        <H2 id="webclient">web client</H2>
+        <P>
+          the <a href="/web" className="text-[var(--color-lime)] hover:underline">web client</a> at{" "}
+          <Lime>lime.sh/web</Lime> lets you access the limes network directly from your browser.
+          no download required — just open the page and you&apos;re connected.
+        </P>
+        <div className="border border-[var(--color-border)] bg-[var(--color-panel)] p-4 text-xs space-y-1 my-4">
+          <TableRow label="supports" value="viewing messages, boards, threads" />
+          <TableRow label="identity" value="generated client-side, stored in localStorage" />
+          <TableRow label="encryption" value="read-only beta (full E2E in future)" />
+          <TableRow label="PoW" value="computed in Web Worker (non-blocking)" />
+          <TableRow label="does NOT support" value="file saving, relay hosting" />
+        </div>
+        <P>
+          note: the web client is currently in beta. for the full experience including end-to-end
+          encryption, DMs, and file sharing, use the native CLI client.
+        </P>
+
+        {/* ── CROSS-PLATFORM ── */}
+        <H2 id="platforms">cross-platform</H2>
+        <P>
+          limes runs on <Lime>Windows</Lime>, <Lime>macOS</Lime>, and <Lime>Linux</Lime>. pre-built
+          binaries are attached to every GitHub Release.
+        </P>
+        <div className="border border-[var(--color-border)] bg-[var(--color-panel)] p-4 text-xs space-y-1 my-4">
+          <TableRow label="Windows" value="limes.exe → %LOCALAPPDATA%\Programs\limes\" />
+          <TableRow label="macOS" value="limes-macos → ~/bin/limes" />
+          <TableRow label="Linux" value="limes-linux → ~/.local/bin/limes" />
+          <TableRow label="pip" value='pip install -e "." (any platform)' />
+        </div>
+        <P>
+          the <Lime>limes upgrade</Lime> command auto-detects your OS and downloads the correct binary.
+          on first run, limes copies itself to a PATH directory so <Lime>limes</Lime> works globally
+          from any terminal.
         </P>
 
         {/* ── COMMANDS ── */}
@@ -427,6 +581,10 @@ export default function DocsPage() {
             ["/boards", "list all known boards"],
             ["/threads", "list active threads in current board"],
             ["/reply [#] [msg]", "post into a thread by number"],
+            ["/dm @name msg", "send a direct message"],
+            ["/file path", "share a file (max ~45KB)"],
+            ["/save # [path]", "save a received file to disk"],
+            ["/help", "show all commands and keybindings"],
             ["/back", "return to board chat from a thread"],
             ["/connect host:port", "connect directly to a peer"],
             ["@name", "mention a user (they get a notification)"],
@@ -444,6 +602,8 @@ export default function DocsPage() {
             ["Esc", "back from thread / cancel input / quit"],
             ["q", "back from thread / quit"],
             ["t", "toggle thread list"],
+            ["d", "toggle DM panel"],
+            ["?", "show help screen"],
             ["1-9", "enter thread by number (from thread list)"],
             ["Backspace", "back to board chat"],
             ["n", "toggle mentions filter"],

@@ -33,8 +33,10 @@ from lime.encryption import (
     decrypt_message,
     generate_room_key,
     seal_room_key,
+    sign_curve_pk,
     signing_to_curve_private,
     unseal_room_key,
+    verify_curve_pk_sig,
     verify_to_curve_public,
 )
 from lime.message import Message, verify_pow
@@ -104,11 +106,14 @@ async def start_relay_loop(relay_url: str):
     curve_private = signing_to_curve_private(sk)
     curve_public = verify_to_curve_public(vk)
     curve_pk_hex = curve_public.encode().hex()
+    curve_pk_sig = sign_curve_pk(sk, curve_pk_hex)
+    verify_key_hex = vk.encode().hex()
     session_id = str(uuid.uuid4())
 
     room_key: list[bytes | None] = [None]
     room_key_event = asyncio.Event()
     seen_ids: set[str] = set()
+    verified_peers: dict[str, str] = {}
 
     while True:
         try:
@@ -117,6 +122,8 @@ async def start_relay_loop(relay_url: str):
                     "type": "hello",
                     "session": session_id,
                     "curve_pk": curve_pk_hex,
+                    "curve_pk_sig": curve_pk_sig,
+                    "verify_key": verify_key_hex,
                 }))
 
                 async for raw in ws:
@@ -130,11 +137,20 @@ async def start_relay_loop(relay_url: str):
                     if t == "relay_peers":
                         peers = data.get("peers", [])
                         _stats["peers_online"] = data.get("count", len(peers))
+                        for p in peers:
+                            pvk = p.get("verify_key", "")
+                            cpk = p.get("curve_pk", "")
+                            sig = p.get("curve_pk_sig", "")
+                            sid = p.get("session", "")
+                            if pvk and cpk and sig and verify_curve_pk_sig(pvk, cpk, sig):
+                                verified_peers[sid] = cpk
                         if peers and room_key[0] is None:
                             await ws.send(json.dumps({
                                 "type": "key_request",
                                 "session": session_id,
                                 "curve_pk": curve_pk_hex,
+                                "curve_pk_sig": curve_pk_sig,
+                                "verify_key": verify_key_hex,
                             }))
                         elif not peers:
                             room_key[0] = generate_room_key()
@@ -144,12 +160,16 @@ async def start_relay_loop(relay_url: str):
                         _stats["peers_online"] += 1
                         peer_curve_pk = data.get("curve_pk", "")
                         peer_session = data.get("session", "")
+                        peer_vk = data.get("verify_key", "")
+                        peer_sig = data.get("curve_pk_sig", "")
+                        if peer_vk and peer_sig and verify_curve_pk_sig(peer_vk, peer_curve_pk, peer_sig):
+                            verified_peers[peer_session] = peer_curve_pk
                         await _broadcast_to_browsers({
                             "type": "peer_join",
                             "peers_online": _stats["peers_online"],
                             "ts": data.get("ts", time.time()),
                         })
-                        if room_key[0] and peer_curve_pk:
+                        if room_key[0] and peer_curve_pk and peer_session in verified_peers:
                             try:
                                 rpk = curve_public_from_hex(peer_curve_pk)
                                 sealed = seal_room_key(room_key[0], rpk)
@@ -181,7 +201,11 @@ async def start_relay_loop(relay_url: str):
                     elif t == "key_request":
                         peer_session = data.get("session", "")
                         peer_curve_pk = data.get("curve_pk", "")
-                        if room_key[0] and peer_curve_pk and peer_session != session_id:
+                        peer_vk = data.get("verify_key", "")
+                        peer_sig = data.get("curve_pk_sig", "")
+                        if peer_vk and peer_sig and verify_curve_pk_sig(peer_vk, peer_curve_pk, peer_sig):
+                            verified_peers[peer_session] = peer_curve_pk
+                        if room_key[0] and peer_curve_pk and peer_session != session_id and peer_session in verified_peers:
                             try:
                                 rpk = curve_public_from_hex(peer_curve_pk)
                                 sealed = seal_room_key(room_key[0], rpk)

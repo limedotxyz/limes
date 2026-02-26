@@ -1,0 +1,65 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: limes.exe
+            pyinstaller_args: --onefile --name limes --icon assets/lime.ico
+          - os: macos-latest
+            artifact: limes-macos
+            pyinstaller_args: --onefile --name limes-macos --target-arch universal2
+          - os: ubuntu-latest
+            artifact: limes-linux
+            pyinstaller_args: --onefile --name limes-linux
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -e ".[build]"
+          pip install pyinstaller
+
+      - name: Build executable
+        run: pyinstaller ${{ matrix.pyinstaller_args }} lime/app.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/limes.exe/limes.exe
+            artifacts/limes-macos/limes-macos
+            artifacts/limes-linux/limes-linux
+          generate_release_notes: true

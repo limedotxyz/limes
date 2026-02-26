@@ -147,10 +147,17 @@ async def _handler(ws):
 
                 session_id = proposed_id
                 curve_pk = str(data.get("curve_pk", ""))[:256]
-                _clients[session_id] = {"ws": ws, "curve_pk": curve_pk}
+                curve_pk_sig = str(data.get("curve_pk_sig", ""))[:256]
+                verify_key = str(data.get("verify_key", ""))[:128]
+                _clients[session_id] = {
+                    "ws": ws, "curve_pk": curve_pk,
+                    "curve_pk_sig": curve_pk_sig, "verify_key": verify_key,
+                }
 
                 peer_list = [
-                    {"session": sid, "curve_pk": info["curve_pk"]}
+                    {"session": sid, "curve_pk": info["curve_pk"],
+                     "curve_pk_sig": info.get("curve_pk_sig", ""),
+                     "verify_key": info.get("verify_key", "")}
                     for sid, info in _clients.items()
                     if sid != session_id
                 ]
@@ -170,6 +177,8 @@ async def _handler(ws):
                     "type": "relay_join",
                     "session": session_id,
                     "curve_pk": curve_pk,
+                    "curve_pk_sig": curve_pk_sig,
+                    "verify_key": verify_key,
                     "ts": time.time(),
                 })
                 for sid, info in list(_clients.items()):
@@ -207,6 +216,17 @@ async def _handler(ws):
                     for sid, info in list(_clients.items()):
                         if sid != session_id:
                             asyncio.create_task(_delayed_forward(info["ws"], encoded))
+                continue
+
+            if msg_type == "dm":
+                target = data.get("to")
+                if isinstance(target, str) and target in _clients:
+                    payload = json.dumps(data)
+                    if len(payload) <= MAX_MSG_BYTES:
+                        try:
+                            await _clients[target]["ws"].send(payload)
+                        except Exception:
+                            pass
                 continue
 
             if msg_type == "key_share":

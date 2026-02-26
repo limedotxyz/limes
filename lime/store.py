@@ -7,6 +7,7 @@ from lime.message import Message
 class MessageStore:
     def __init__(self):
         self._messages: dict[str, Message] = {}
+        self._dms: dict[str, Message] = {}
         self._lock = threading.Lock()
         self._on_new: list[Callable[[Message], None]] = []
         self._last_hash = "0" * 64
@@ -98,6 +99,49 @@ class MessageStore:
     def get_mentions(self, name: str) -> list[Message]:
         tag = f"@{name}"
         return [m for m in self.get_all() if tag in m.content]
+
+    def add_dm(self, msg: Message) -> bool:
+        if msg.is_expired:
+            return False
+        with self._lock:
+            if msg.id in self._dms:
+                return False
+            self._dms[msg.id] = msg
+        return True
+
+    def get_dms(self, my_name: str) -> list[Message]:
+        with self._lock:
+            self._prune_dms()
+            return sorted(
+                [m for m in self._dms.values()
+                 if not m.is_expired],
+                key=lambda m: m.timestamp,
+            )
+
+    def get_dm_conversations(self, my_name: str) -> dict[str, list[Message]]:
+        with self._lock:
+            self._prune_dms()
+            convos: dict[str, list[Message]] = {}
+            for m in self._dms.values():
+                if m.is_expired:
+                    continue
+                peer = m.author_name if m.author_name != my_name else m.board
+                if peer not in convos:
+                    convos[peer] = []
+                convos[peer].append(m)
+            for v in convos.values():
+                v.sort(key=lambda m: m.timestamp)
+            return convos
+
+    def _prune_dms(self) -> int:
+        expired = [mid for mid, m in self._dms.items() if m.is_expired]
+        for mid in expired:
+            del self._dms[mid]
+        return len(expired)
+
+    def dm_count(self) -> int:
+        with self._lock:
+            return len(self._dms)
 
     def on_new_message(self, callback: Callable[[Message], None]):
         self._on_new.append(callback)

@@ -9,10 +9,14 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@xterm/xterm": "^6.0.0",
     "geist": "^1.7.0",
     "next": "16.1.6",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "tweetnacl": "^1.0.3",
+    "tweetnacl-util": "^0.15.1",
+    "viem": "^2.46.3"
   },
   "engines": {
     "node": "22.x"

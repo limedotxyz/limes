@@ -27,6 +27,7 @@ class LimeTUI:
         ui_queue: queue.Queue,
         send_cb: Callable,
         connect_cb: Callable[[str, int], None],
+        dm_cb: Optional[Callable] = None,
     ):
         self.name = name
         self.tag = tag
@@ -34,6 +35,7 @@ class LimeTUI:
         self.ui_queue = ui_queue
         self.send_cb = send_cb
         self.connect_cb = connect_cb
+        self.dm_cb = dm_cb
 
         self.input_buf = ""
         self.input_mode = False
@@ -52,6 +54,10 @@ class LimeTUI:
         self.current_thread_id = ""
         self.current_thread_title = ""
         self.show_thread_list = False
+        self.show_help = False
+        self.show_dms = False
+        self.dm_count_unread = 0
+        self.first_run_tip = True
 
         self._tab_candidates: list[str] = []
         self._tab_index = -1
@@ -118,6 +124,15 @@ class LimeTUI:
         if key in (ord("i"), 10):
             self.input_mode = True
             curses.curs_set(1)
+            self.first_run_tip = False
+        elif key == ord("?"):
+            self.show_help = not self.show_help
+            self.scroll_offset = 0
+        elif key == ord("d"):
+            self.show_dms = not self.show_dms
+            if self.show_dms:
+                self.dm_count_unread = 0
+            self.scroll_offset = 0
         elif key == ord("n"):
             self.mentions_only = not self.mentions_only
             self.scroll_offset = 0
@@ -158,7 +173,8 @@ class LimeTUI:
 
     _COMPLETIONS = [
         "/t ", "/b ", "/boards", "/threads", "/back",
-        "/reply ", "/connect ", "@",
+        "/reply ", "/connect ", "/dm ", "/file ", "/save ",
+        "/help", "@",
     ]
 
     def _key_input(self, key) -> bool:
@@ -289,11 +305,34 @@ class LimeTUI:
             self.scroll_offset = 0
             return
 
+        # /dm @name message — send a DM
+        if text.startswith("/dm "):
+            parts = text[4:].strip().split(" ", 1)
+            if len(parts) < 2:
+                self._flash("usage: /dm @name message")
+                return
+            target = parts[0].lstrip("@")
+            message = parts[1]
+            if self.dm_cb:
+                self.dm_cb(message, target)
+                self._flash(f"dm sent to {target}")
+            else:
+                self._flash("DMs not available")
+            return
+
+        # /help — show help overlay
+        if text == "/help":
+            self.show_help = True
+            self.scroll_offset = 0
+            return
+
         # /back — return to board chat
         if text == "/back":
             self.current_thread_id = ""
             self.current_thread_title = ""
             self.show_thread_list = False
+            self.show_help = False
+            self.show_dms = False
             self.scroll_offset = 0
             return
 
@@ -316,6 +355,23 @@ class LimeTUI:
             t = threads[thread_num - 1]
             self.send_cb(message, "text", self.current_board, t["thread_id"], "", "")
             self.mining = True
+            return
+
+        # /file path — share a file
+        if text.startswith("/file "):
+            filepath = text[6:].strip()
+            self._send_file(filepath)
+            return
+
+        # /save # [path] — save a received file
+        if text.startswith("/save "):
+            parts = text[6:].strip().split(" ", 1)
+            try:
+                idx = int(parts[0].lstrip("#")) - 1
+                dest = parts[1] if len(parts) > 1 else ""
+                self._save_file(idx, dest)
+            except (ValueError, IndexError):
+                self._flash("usage: /save #num [path]")
             return
 
         # Regular message — board-level chat or inside a thread
@@ -354,6 +410,11 @@ class LimeTUI:
                 self.mining = False
             elif kind == "msg_sent":
                 self.mining = False
+            elif kind == "new_dm":
+                dm_msg: Message = ev[1]
+                if not self.show_dms:
+                    self.dm_count_unread += 1
+                    curses.beep()
             elif kind == "peer_joined":
                 self.peer_count += 1
                 self._flash(f"{ev[1]} joined")
@@ -392,7 +453,11 @@ class LimeTUI:
 
         feed_bottom = H - 3
 
-        if self.mentions_only:
+        if self.show_help:
+            self._draw_help(row, feed_bottom, W)
+        elif self.show_dms:
+            self._draw_dm_feed(row, feed_bottom, W)
+        elif self.mentions_only:
             self._draw_feed(row, feed_bottom, W)
         elif self.current_thread_id:
             self._draw_thread_header(row, W)
@@ -535,7 +600,11 @@ class LimeTUI:
         prefix = f" {author}: "
         remaining = f" {msg.remaining_display} "
         max_content = W - len(prefix) - len(remaining) - 1
-        content = msg.content.replace("\n", " ")
+        if msg.content_type == "file" and msg.file_name:
+            kb = msg.file_size // 1024
+            content = f"[file: {msg.file_name} ({kb}KB)] /save #{self._file_index(msg)}"
+        else:
+            content = msg.content.replace("\n", " ")
         if len(content) > max_content:
             content = content[: max_content - 1] + "~"
 
@@ -598,12 +667,16 @@ class LimeTUI:
                 scr.addstr(row, len(prompt), visible, curses.color_pair(C_DIM))
             else:
                 scr.addstr(row, 0, prompt, curses.color_pair(C_DIM) | curses.A_DIM)
-                if self.current_thread_id:
+                if self.show_help:
+                    hint = "[?] close help  [q] quit"
+                elif self.show_dms:
+                    hint = "[i] type  [d] back to chat"
+                elif self.current_thread_id:
                     hint = "[i] type  [q] back to chat"
                 elif self.show_thread_list:
                     hint = "[1-9] enter thread  [q] back"
                 else:
-                    hint = "[i] type  [t] threads  [n] notif"
+                    hint = "[i] type  [t] threads  [d] DMs  [?] help"
                 scr.addstr(row, len(prompt), hint,
                            curses.color_pair(C_DIM) | curses.A_DIM)
         except curses.error:
@@ -612,7 +685,9 @@ class LimeTUI:
     # -- status bar ----------------------------------------------------
 
     def _draw_status(self, row: int, W: int):
-        if self.status_msg and time.time() < self.status_expire:
+        if self.first_run_tip and not self.status_msg:
+            left = " tip: press [i] to type, [t] threads, [d] DMs, [?] help"
+        elif self.status_msg and time.time() < self.status_expire:
             left = f" {self.status_msg}"
         else:
             board_path = f"/{self.current_board}/"
@@ -622,7 +697,8 @@ class LimeTUI:
             thread_count = len(self.store.get_threads(self.current_board))
             threads_info = f" {thread_count}t" if thread_count and not self.current_thread_id else ""
             mode = " [mentions]" if self.mentions_only else ""
-            left = f" {board_path}{threads_info} [n]otif({self.mention_count}){mode}"
+            dm_info = f" dm({self.dm_count_unread})" if self.dm_count_unread else ""
+            left = f" {board_path}{threads_info} [n]otif({self.mention_count}){dm_info}{mode}"
 
         relay = " relay:on" if self.relay_connected else ""
         e2e = " e2e:on" if self.e2e_active else ""
@@ -633,6 +709,124 @@ class LimeTUI:
             self._scr.addstr(row, 0, line[: W - 1], curses.A_REVERSE)
         except curses.error:
             pass
+
+    def _file_index(self, msg: Message) -> int:
+        file_msgs = [m for m in self.store.get_board_chat(self.current_board)
+                     if m.content_type == "file" and m.file_data]
+        for i, m in enumerate(file_msgs):
+            if m.id == msg.id:
+                return i + 1
+        return 0
+
+    # -- file sharing --------------------------------------------------
+
+    MAX_FILE_SIZE = 45_000  # ~45KB raw, fits within 64KB after base64 + overhead
+
+    def _send_file(self, filepath: str):
+        import base64
+        from pathlib import Path
+        p = Path(filepath)
+        if not p.exists():
+            self._flash(f"file not found: {filepath}")
+            return
+        size = p.stat().st_size
+        if size > self.MAX_FILE_SIZE:
+            self._flash(f"file too large ({size // 1024}KB > {self.MAX_FILE_SIZE // 1024}KB)")
+            return
+        data = p.read_bytes()
+        b64 = base64.b64encode(data).decode()
+        display = f"[file: {p.name} ({size // 1024}KB)]"
+        self.send_cb(
+            display, "file", self.current_board,
+            self.current_thread_id, "", "",
+            file_name=p.name, file_data=b64, file_size=size,
+        )
+        self.mining = True
+        self._flash(f"sharing {p.name}...")
+
+    def _save_file(self, idx: int, dest: str):
+        import base64
+        from pathlib import Path
+        msgs = self.store.get_board_chat(self.current_board)
+        file_msgs = [m for m in msgs if m.content_type == "file" and m.file_data]
+        if idx < 0 or idx >= len(file_msgs):
+            self._flash(f"file #{idx + 1} not found")
+            return
+        msg = file_msgs[idx]
+        data = base64.b64decode(msg.file_data)
+        out = Path(dest) if dest else Path(msg.file_name)
+        out.write_bytes(data)
+        self._flash(f"saved: {out}")
+
+    # -- help screen ---------------------------------------------------
+
+    def _draw_help(self, top: int, bottom: int, W: int):
+        lines = [
+            ("COMMANDS", True),
+            ("  /help           show this help", False),
+            ("  /t [title]      create a thread", False),
+            ("  /b [board]      switch boards", False),
+            ("  /boards         list boards", False),
+            ("  /threads        list threads", False),
+            ("  /reply # msg    reply to thread", False),
+            ("  /back           back to board", False),
+            ("  /dm @name msg   send a DM", False),
+            ("  /file path      share a file", False),
+            ("  /save # [path]  save a file", False),
+            ("  /connect h:p    connect to peer", False),
+            ("  @name           mention a user", False),
+            ("", False),
+            ("KEYBINDINGS", True),
+            ("  i / Enter    input mode", False),
+            ("  Esc / q      back / quit", False),
+            ("  t            thread list", False),
+            ("  d            toggle DMs", False),
+            ("  n            mentions filter", False),
+            ("  h            toggle header", False),
+            ("  ?            this help", False),
+            ("  1-9          enter thread", False),
+            ("  Up/Down      scroll", False),
+        ]
+        for i, (text, is_header) in enumerate(lines):
+            r = top + i
+            if r >= bottom:
+                break
+            try:
+                attr = curses.color_pair(C_GREEN) | curses.A_BOLD if is_header else curses.color_pair(C_DIM)
+                self._scr.addstr(r, 1, text[:W-2], attr)
+            except curses.error:
+                pass
+
+    # -- DM feed -------------------------------------------------------
+
+    def _draw_dm_feed(self, top: int, bottom: int, W: int):
+        dms = self.store.get_dms(self.name)
+        avail = bottom - top
+        if avail <= 0:
+            return
+
+        try:
+            self._scr.addstr(top, 1, "direct messages  [d] back to chat",
+                             curses.color_pair(C_DIM) | curses.A_DIM)
+        except curses.error:
+            pass
+
+        if not dms:
+            try:
+                self._scr.addstr(top + 2, 2, "no DMs yet",
+                                 curses.color_pair(C_DIM))
+                self._scr.addstr(top + 3, 2, "use /dm @name message to send one",
+                                 curses.color_pair(C_DIM) | curses.A_DIM)
+            except curses.error:
+                pass
+            return
+
+        start = max(0, len(dms) - (avail - 1))
+        for i, msg in enumerate(dms[start:]):
+            r = top + 1 + i
+            if r >= bottom:
+                break
+            self._draw_msg(r, W, msg)
 
     # -- helpers -------------------------------------------------------
 

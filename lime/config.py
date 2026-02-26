@@ -1,6 +1,6 @@
 from pathlib import Path
 
-VERSION = "1.0.2"
+VERSION = "2.0.0"
 
 LIME_DIR = Path.home() / ".lime"
 IDENTITY_FILE = LIME_DIR / "identity.json"
@@ -42,3 +42,4 @@ CHAIN_RPC = "https://mainnet.base.org"
 CHAIN_ID = 8453
 LIME_CONTRACT = ""   # Clanker-deployed $LIME ERC-20 address
 VAULT_CONTRACT = ""  # LimesVault staking/rewards contract address
+REGISTRY_CONTRACT = ""  # LimesRegistry relay registry contract address

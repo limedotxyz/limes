@@ -14,7 +14,6 @@ from lime.config import (
     PEER_TIMEOUT,
     POW_DIFFICULTY,
     PRUNE_INTERVAL,
-    RELAY_SERVERS,
     TCP_PORT_DEFAULT,
 )
 from lime.crypto import verify
@@ -27,6 +26,8 @@ from lime.encryption import (
     unseal_room_key,
     encrypt_message,
     decrypt_message,
+    sign_curve_pk,
+    verify_curve_pk_sig,
 )
 from lime.message import Message, verify_pow
 from lime.store import MessageStore
@@ -89,8 +90,10 @@ class Network:
         self._curve_private = signing_to_curve_private(signing_key)
         self._curve_public = verify_to_curve_public(signing_key.verify_key)
         self._curve_pk_hex = self._curve_public.encode().hex()
+        self._curve_pk_sig = sign_curve_pk(signing_key, self._curve_pk_hex)
         self._room_key: bytes | None = None
         self._room_key_event = asyncio.Event()
+        self._verified_peers: dict[str, str] = {}  # session -> curve_pk_hex
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -120,7 +123,8 @@ class Network:
         asyncio.create_task(self._heartbeat_loop())
         asyncio.create_task(self._prune_loop())
 
-        for relay_url in RELAY_SERVERS:
+        from lime.registry import get_relay_urls
+        for relay_url in get_relay_urls():
             asyncio.create_task(self._relay_connect(relay_url))
 
         self.ui_queue.put(("status", f"listening on port {self.tcp_port}"))
@@ -155,13 +159,15 @@ class Network:
                     self._relay_ws[url] = ws
                     self.ui_queue.put(("status", "relay connected"))
 
-                    # Anonymous hello — no name, no tag, no signing key
                     hello = json.dumps({
                         "type": "hello",
                         "session": self._session_id,
                         "curve_pk": self._curve_pk_hex,
+                        "curve_pk_sig": self._curve_pk_sig,
+                        "verify_key": self.pubkey_hex,
                     })
                     await ws.send(hello)
+                    asyncio.create_task(self._request_sync(ws))
 
                     async for raw in ws:
                         if not self._running:
@@ -184,6 +190,13 @@ class Network:
         if t == "relay_peers":
             peers = data.get("peers", [])
             count = data.get("count", len(peers))
+            for p in peers:
+                vk = p.get("verify_key", "")
+                cpk = p.get("curve_pk", "")
+                sig = p.get("curve_pk_sig", "")
+                sid = p.get("session", "")
+                if vk and cpk and sig and verify_curve_pk_sig(vk, cpk, sig):
+                    self._verified_peers[sid] = cpk
             if count > 0:
                 self.ui_queue.put(("status", f"relay: {count} peers online"))
             if peers and self._room_key is None:
@@ -191,6 +204,8 @@ class Network:
                     "type": "key_request",
                     "session": self._session_id,
                     "curve_pk": self._curve_pk_hex,
+                    "curve_pk_sig": self._curve_pk_sig,
+                    "verify_key": self.pubkey_hex,
                 }))
                 asyncio.create_task(self._key_timeout())
             elif not peers:
@@ -202,7 +217,11 @@ class Network:
             self.ui_queue.put(("peer_joined", "a peer"))
             peer_curve_pk = data.get("curve_pk", "")
             peer_session = data.get("session", "")
-            if self._room_key and peer_curve_pk:
+            peer_vk = data.get("verify_key", "")
+            peer_sig = data.get("curve_pk_sig", "")
+            if peer_vk and peer_sig and verify_curve_pk_sig(peer_vk, peer_curve_pk, peer_sig):
+                self._verified_peers[peer_session] = peer_curve_pk
+            if self._room_key and peer_curve_pk and peer_session in self._verified_peers:
                 try:
                     recipient_pk = curve_public_from_hex(peer_curve_pk)
                     sealed = seal_room_key(self._room_key, recipient_pk)
@@ -230,7 +249,11 @@ class Network:
         elif t == "key_request":
             peer_session = data.get("session", "")
             peer_curve_pk = data.get("curve_pk", "")
-            if self._room_key and peer_curve_pk and peer_session != self._session_id:
+            peer_vk = data.get("verify_key", "")
+            peer_sig = data.get("curve_pk_sig", "")
+            if peer_vk and peer_sig and verify_curve_pk_sig(peer_vk, peer_curve_pk, peer_sig):
+                self._verified_peers[peer_session] = peer_curve_pk
+            if self._room_key and peer_curve_pk and peer_session != self._session_id and peer_session in self._verified_peers:
                 try:
                     recipient_pk = curve_public_from_hex(peer_curve_pk)
                     sealed = seal_room_key(self._room_key, recipient_pk)
@@ -248,7 +271,27 @@ class Network:
                     envelope = data.get("envelope", "")
                     plaintext = decrypt_message(envelope, self._room_key)
                     msg_data = json.loads(plaintext)
-                    await self._handle_msg(msg_data, from_peer=None)
+                    if isinstance(msg_data, dict) and msg_data.get("type") == "sync_request":
+                        await self._handle_sync_request(msg_data, ws)
+                    elif isinstance(msg_data, dict) and msg_data.get("type") == "sync_response":
+                        for raw_msg in msg_data.get("messages", []):
+                            await self._handle_msg(raw_msg, from_peer=None)
+                    else:
+                        await self._handle_msg(msg_data, from_peer=None)
+                except Exception:
+                    pass
+
+        elif t == "dm":
+            if self._room_key:
+                try:
+                    envelope = data.get("envelope", "")
+                    plaintext = decrypt_message(envelope, self._room_key)
+                    msg_data = json.loads(plaintext)
+                    msg = Message.from_dict(msg_data)
+                    if not msg.is_expired and msg.id not in self.seen_ids:
+                        self.seen_ids.add(msg.id)
+                        self.store.add_dm(msg)
+                        self.ui_queue.put(("new_dm", msg))
                 except Exception:
                     pass
 
@@ -264,6 +307,43 @@ class Network:
                 self._room_key = generate_room_key()
                 self._room_key_event.set()
                 self.ui_queue.put(("e2e", True))
+
+    async def _request_sync(self, ws):
+        """After obtaining the room key, request missed messages from peers."""
+        await self._room_key_event.wait()
+        all_msgs = self.store.get_all()
+        since = all_msgs[-1].timestamp if all_msgs else 0.0
+        payload = json.dumps({"type": "sync_request", "since": since})
+        if self._room_key:
+            envelope = encrypt_message(payload.encode(), self._room_key)
+            await ws.send(json.dumps({"type": "msg", "envelope": envelope}))
+
+    async def _handle_sync_request(self, data: dict, ws):
+        """Respond with messages since the requested timestamp."""
+        since = data.get("since", 0.0)
+        msgs = [m.to_dict() for m in self.store.get_all() if m.timestamp > since]
+        if not msgs:
+            return
+        response = json.dumps({"type": "sync_response", "messages": msgs[-50:]})
+        if self._room_key:
+            envelope = encrypt_message(response.encode(), self._room_key)
+            try:
+                await ws.send(json.dumps({"type": "msg", "envelope": envelope}))
+            except Exception:
+                pass
+
+    async def send_dm(self, msg: Message, target_session: str):
+        """Encrypt and send a DM through relays, targeted to a specific session."""
+        if self._room_key is None:
+            return
+        plaintext = json.dumps(msg.to_dict()).encode()
+        envelope = encrypt_message(plaintext, self._room_key)
+        payload = json.dumps({"type": "dm", "to": target_session, "envelope": envelope})
+        for url, ws in list(self._relay_ws.items()):
+            try:
+                await ws.send(payload)
+            except Exception:
+                self._relay_ws.pop(url, None)
 
     async def _relay_broadcast(self, msg: Message):
         """Encrypt and send a message through all connected relays."""

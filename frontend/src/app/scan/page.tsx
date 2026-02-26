@@ -2,9 +2,39 @@
 // Client component required for WebSocket connection and real-time state updates.
 
 import { useEffect, useRef, useState, useCallback } from "react";
+import { createPublicClient, http, type Address } from "viem";
+import { base } from "viem/chains";
 
 const SCANNER_WS = process.env.NEXT_PUBLIC_SCANNER_WS || "wss://relay-production-e4f7.up.railway.app/live";
 const LIME_CONTRACT = process.env.NEXT_PUBLIC_LIME_CONTRACT || "";
+const REGISTRY_CONTRACT = process.env.NEXT_PUBLIC_REGISTRY_CONTRACT || "";
+
+const REGISTRY_ABI = [
+  {
+    inputs: [],
+    name: "getRelays",
+    outputs: [
+      {
+        components: [
+          { name: "operator", type: "address" },
+          { name: "url", type: "string" },
+          { name: "registeredAt", type: "uint256" },
+        ],
+        name: "",
+        type: "tuple[]",
+      },
+    ],
+    stateMutability: "view",
+    type: "function",
+  },
+] as const;
+
+interface OnChainRelay {
+  operator: string;
+  url: string;
+  registeredAt: number;
+  isOnline?: boolean;
+}
 
 interface LimeMessage {
   id: string;
@@ -44,7 +74,7 @@ interface MiningEvent {
   ts: number;
 }
 
-type ExpandedPanel = "authors" | "mining" | "events" | null;
+type ExpandedPanel = "authors" | "mining" | "events" | "relays" | null;
 
 function formatTimeLeft(msg: LimeMessage): string {
   const elapsed = Date.now() / 1000 - msg.timestamp;
@@ -90,6 +120,7 @@ export default function ScanPage() {
   const [selectedMessage, setSelectedMessage] = useState<LimeMessage | null>(null);
   const [boardFilter, setBoardFilter] = useState<string>("all");
   const [threadFilter, setThreadFilter] = useState<string>("all");
+  const [onchainRelays, setOnchainRelays] = useState<OnChainRelay[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
   const feedRef = useRef<HTMLDivElement>(null);
 
@@ -110,6 +141,54 @@ export default function ScanPage() {
       });
     }, 5000);
     return () => clearInterval(pruneInterval);
+  }, []);
+
+  // Fetch relays from on-chain registry and health-check them
+  useEffect(() => {
+    async function fetchRelays() {
+      if (!REGISTRY_CONTRACT) {
+        // fallback: show the default relay
+        const defaults: OnChainRelay[] = [
+          { operator: "", url: "wss://relay-production-e4f7.up.railway.app", registeredAt: 0 },
+        ];
+        // health check
+        for (const r of defaults) {
+          r.isOnline = await checkRelayHealth(r.url);
+        }
+        setOnchainRelays(defaults);
+        return;
+      }
+      try {
+        const client = createPublicClient({ chain: base, transport: http() });
+        const raw = await client.readContract({
+          address: REGISTRY_CONTRACT as Address,
+          abi: REGISTRY_ABI,
+          functionName: "getRelays",
+        });
+        const relays: OnChainRelay[] = (raw as { operator: string; url: string; registeredAt: bigint }[]).map((r) => ({
+          operator: r.operator,
+          url: r.url,
+          registeredAt: Number(r.registeredAt),
+          isOnline: undefined,
+        }));
+        for (const r of relays) {
+          r.isOnline = await checkRelayHealth(r.url);
+        }
+        setOnchainRelays(relays);
+      } catch {
+        // fallback
+        const defaults: OnChainRelay[] = [
+          { operator: "", url: "wss://relay-production-e4f7.up.railway.app", registeredAt: 0 },
+        ];
+        for (const r of defaults) {
+          r.isOnline = await checkRelayHealth(r.url);
+        }
+        setOnchainRelays(defaults);
+      }
+    }
+    fetchRelays();
+    const interval = setInterval(fetchRelays, 300_000); // refresh every 5 min
+    return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -269,6 +348,7 @@ export default function ScanPage() {
           authors={authors}
           miningEvents={miningEvents}
           events={events}
+          relays={onchainRelays}
           onClose={() => setExpandedPanel(null)}
         />
       )}
@@ -516,6 +596,45 @@ export default function ScanPage() {
               )}
             </SidebarCard>
 
+            {/* active relays */}
+            <SidebarCard
+              title="active relays"
+              count={onchainRelays.length}
+              onExpand={() => setExpandedPanel("relays")}
+            >
+              {onchainRelays.length === 0 ? (
+                <p className="text-[var(--color-foreground)]/20 py-3 text-center">
+                  loading relays...
+                </p>
+              ) : (
+                onchainRelays.slice(0, 5).map((r, i) => (
+                  <div key={i} className="flex items-center justify-between py-1 border-b border-[var(--color-border)]/10 last:border-0">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span
+                        className={`inline-block w-2 h-2 rounded-full shrink-0 ${
+                          r.isOnline
+                            ? "bg-[var(--color-lime)] shadow-[0_0_6px_var(--color-lime)] animate-pulse"
+                            : "bg-[var(--color-foreground)]/20"
+                        }`}
+                      />
+                      <span className="text-[var(--color-foreground)]/60 truncate text-[10px]">
+                        {r.url.replace("wss://", "").replace("ws://", "")}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(`limes connect ${r.url}`);
+                      }}
+                      className="text-[var(--color-foreground)]/20 hover:text-[var(--color-lime)] transition-colors text-[10px] shrink-0 ml-2"
+                      title="copy connect command"
+                    >
+                      copy
+                    </button>
+                  </div>
+                ))
+              )}
+            </SidebarCard>
+
             {/* $LIME token */}
             <div className="border border-[var(--color-border)] bg-[var(--color-panel)] text-xs">
               <div className="px-3 py-2 border-b border-[var(--color-border)] text-[var(--color-lime)] font-bold text-sm">
@@ -585,17 +704,42 @@ export default function ScanPage() {
 // Expanded overlay
 // ------------------------------------------------------------------
 
+function checkRelayHealth(url: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    try {
+      const ws = new WebSocket(url);
+      const timer = setTimeout(() => {
+        ws.close();
+        resolve(false);
+      }, 5000);
+      ws.onopen = () => {
+        clearTimeout(timer);
+        ws.close();
+        resolve(true);
+      };
+      ws.onerror = () => {
+        clearTimeout(timer);
+        resolve(false);
+      };
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
 function ExpandedOverlay({
   panel,
   authors,
   miningEvents,
   events,
+  relays,
   onClose,
 }: {
   panel: ExpandedPanel;
   authors: string[];
   miningEvents: MiningEvent[];
   events: { text: string; ts: number; type: string }[];
+  relays: OnChainRelay[];
   onClose: () => void;
 }) {
   useEffect(() => {
@@ -620,6 +764,7 @@ function ExpandedOverlay({
             {panel === "authors" && `active authors (${authors.length})`}
             {panel === "mining" && `mining activity (${miningEvents.length})`}
             {panel === "events" && `event log (${events.length})`}
+            {panel === "relays" && `active relays (${relays.length})`}
           </h2>
           <button
             onClick={onClose}
@@ -722,6 +867,52 @@ function ExpandedOverlay({
                   </span>
                 </div>
               ))
+            ))}
+
+          {panel === "relays" &&
+            (relays.length === 0 ? (
+              <p className="text-[var(--color-foreground)]/20 text-center py-10">
+                no relays registered
+              </p>
+            ) : (
+              <>
+                <div className="flex items-center text-[10px] text-[var(--color-foreground)]/25 uppercase tracking-wider pb-1 border-b border-[var(--color-border)]/20 mb-1">
+                  <span className="w-8">status</span>
+                  <span className="w-32">operator</span>
+                  <span className="flex-1">url</span>
+                  <span className="w-24 text-right">connect</span>
+                </div>
+                {relays.map((r, i) => (
+                  <div
+                    key={i}
+                    className="flex items-center py-2 border-b border-[var(--color-border)]/10 last:border-0 hover:bg-[var(--color-border)]/10 transition-colors"
+                  >
+                    <div className="w-8 flex justify-center">
+                      <span
+                        className={`inline-block w-2.5 h-2.5 rounded-full ${
+                          r.isOnline
+                            ? "bg-[var(--color-lime)] shadow-[0_0_8px_var(--color-lime)] animate-pulse"
+                            : "bg-[var(--color-foreground)]/20"
+                        }`}
+                      />
+                    </div>
+                    <span className="w-32 text-[var(--color-foreground)]/40 font-mono">
+                      {r.operator ? truncateHash(r.operator) : "default"}
+                    </span>
+                    <span className="flex-1 text-[var(--color-foreground)]/60 font-mono truncate">
+                      {r.url}
+                    </span>
+                    <div className="w-24 text-right">
+                      <button
+                        onClick={() => navigator.clipboard.writeText(`limes connect ${r.url}`)}
+                        className="text-[10px] px-2 py-0.5 border border-[var(--color-border)] text-[var(--color-foreground)]/40 hover:border-[var(--color-lime)] hover:text-[var(--color-lime)] transition-colors"
+                      >
+                        copy cmd
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </>
             ))}
         </div>
       </div>

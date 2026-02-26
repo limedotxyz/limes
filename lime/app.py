@@ -60,34 +60,61 @@ def _install_to_path():
         return
 
     exe_src = sys.executable
-    install_dir = Path.home() / "AppData" / "Local" / "Programs" / "limes"
+    platform = sys.platform
+
+    if platform == "win32":
+        install_dir = Path.home() / "AppData" / "Local" / "Programs" / "limes"
+        dest = install_dir / "limes.exe"
+    elif platform == "darwin":
+        install_dir = Path.home() / "bin"
+        dest = install_dir / "limes"
+    else:
+        install_dir = Path.home() / ".local" / "bin"
+        dest = install_dir / "limes"
+
     install_dir.mkdir(parents=True, exist_ok=True)
-    dest = install_dir / "limes.exe"
 
     copied = False
     if not (dest.exists() and dest.resolve() == Path(exe_src).resolve()):
         try:
             shutil.copy2(exe_src, dest)
+            if platform != "win32":
+                os.chmod(dest, 0o755)
             copied = True
         except Exception:
             pass
 
-    dir_str = str(install_dir)
-    try:
-        user_path = subprocess.run(
-            ["powershell", "-Command",
-             "[Environment]::GetEnvironmentVariable('Path','User')"],
-            capture_output=True, text=True, timeout=10,
-        ).stdout.strip()
-        if dir_str.lower() not in user_path.lower():
-            new_path = user_path.rstrip(";") + ";" + dir_str
-            subprocess.run(
+    if platform == "win32":
+        dir_str = str(install_dir)
+        try:
+            user_path = subprocess.run(
                 ["powershell", "-Command",
-                 f"[Environment]::SetEnvironmentVariable('Path','{new_path}','User')"],
-                capture_output=True, timeout=10,
-            )
-    except Exception:
-        pass
+                 "[Environment]::GetEnvironmentVariable('Path','User')"],
+                capture_output=True, text=True, timeout=10,
+            ).stdout.strip()
+            if dir_str.lower() not in user_path.lower():
+                new_path = user_path.rstrip(";") + ";" + dir_str
+                subprocess.run(
+                    ["powershell", "-Command",
+                     f"[Environment]::SetEnvironmentVariable('Path','{new_path}','User')"],
+                    capture_output=True, timeout=10,
+                )
+        except Exception:
+            pass
+    else:
+        dir_str = str(install_dir)
+        shell_rc = Path.home() / (".zshrc" if platform == "darwin" else ".bashrc")
+        export_line = f'export PATH="{dir_str}:$PATH"'
+        try:
+            if shell_rc.exists():
+                content = shell_rc.read_text()
+                if dir_str not in content:
+                    with open(shell_rc, "a") as f:
+                        f.write(f"\n{export_line}\n")
+            else:
+                shell_rc.write_text(f"{export_line}\n")
+        except Exception:
+            pass
 
     if copied:
         _ok(f'installed to {dest}')
@@ -113,7 +140,14 @@ def _cmd_upgrade():
     print()
 
     version_url = f"{UPDATE_BASE_URL}/version.txt"
-    exe_url = f"{UPDATE_BASE_URL}/limes.exe"
+    platform = sys.platform
+    if platform == "win32":
+        exe_name = "limes.exe"
+    elif platform == "darwin":
+        exe_name = "limes-macos"
+    else:
+        exe_name = "limes-linux"
+    exe_url = f"{UPDATE_BASE_URL}/{exe_name}"
 
     _ok("checking for updates...")
     try:
@@ -135,12 +169,19 @@ def _cmd_upgrade():
     _ok(f"new version available: {remote_version}")
 
     if not getattr(sys, "frozen", False):
-        _ok("not running as exe — upgrade only works for the packaged .exe")
+        _ok("not running as exe — upgrade only works for the packaged binary")
         _ok(f"download manually from: {exe_url}")
         return
 
-    install_dir = Path.home() / "AppData" / "Local" / "Programs" / "limes"
-    current_exe = install_dir / "limes.exe"
+    if platform == "win32":
+        install_dir = Path.home() / "AppData" / "Local" / "Programs" / "limes"
+        current_exe = install_dir / "limes.exe"
+    elif platform == "darwin":
+        install_dir = Path.home() / "bin"
+        current_exe = install_dir / "limes"
+    else:
+        install_dir = Path.home() / ".local" / "bin"
+        current_exe = install_dir / "limes"
     if not current_exe.exists():
         current_exe = Path(sys.executable)
 
@@ -371,7 +412,8 @@ def _network_main(network: Network, saved_peers: list, connect_addr):
 
 def _make_send_cb(network, store, name, tag, pubkey_hex, sk, ui_queue):
     def send(content: str, content_type: str, board: str = "general",
-             thread_id: str = "", thread_title: str = "", reply_to: str = ""):
+             thread_id: str = "", thread_title: str = "", reply_to: str = "",
+             file_name: str = "", file_data: str = "", file_size: int = 0):
         async def _do():
             loop = asyncio.get_event_loop()
             msg = await loop.run_in_executor(
@@ -381,6 +423,8 @@ def _make_send_cb(network, store, name, tag, pubkey_hex, sk, ui_queue):
                     store.last_hash, lambda data: sign(sk, data),
                     board=board, thread_id=thread_id,
                     thread_title=thread_title, reply_to=reply_to,
+                    file_name=file_name, file_data=file_data,
+                    file_size=file_size,
                 ),
             )
             store.add(msg)
@@ -391,6 +435,29 @@ def _make_send_cb(network, store, name, tag, pubkey_hex, sk, ui_queue):
             asyncio.run_coroutine_threadsafe(_do(), _net_loop)
 
     return send
+
+
+def _make_dm_cb(network, store, name, tag, pubkey_hex, sk, ui_queue):
+    def send_dm(content: str, target_name: str):
+        async def _do():
+            loop = asyncio.get_event_loop()
+            msg = await loop.run_in_executor(
+                None,
+                lambda: create_message(
+                    content, "text", name, tag, pubkey_hex,
+                    store.last_hash, lambda data: sign(sk, data),
+                    board=target_name,
+                ),
+            )
+            store.add_dm(msg)
+            ui_queue.put(("new_dm", msg))
+            for sid, cpk in network._verified_peers.items():
+                await network.send_dm(msg, sid)
+
+        if _net_loop:
+            asyncio.run_coroutine_threadsafe(_do(), _net_loop)
+
+    return send_dm
 
 
 def _make_connect_cb(network):
@@ -442,6 +509,7 @@ def _open_tui(args):
         ui_queue=ui_queue,
         send_cb=_make_send_cb(network, store, name, tag, pubkey_hex, sk, ui_queue),
         connect_cb=_make_connect_cb(network),
+        dm_cb=_make_dm_cb(network, store, name, tag, pubkey_hex, sk, ui_queue),
     )
 
     curses.wrapper(tui.run)

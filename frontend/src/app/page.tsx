@@ -36,6 +36,10 @@ const COMMANDS: { cmd: string; desc: string; cat: CmdCat }[] = [
   { cmd: "/boards", desc: "list boards", cat: "chat" },
   { cmd: "/threads", desc: "list threads", cat: "chat" },
   { cmd: "/reply [#] [msg]", desc: "reply to thread", cat: "chat" },
+  { cmd: "/dm @name msg", desc: "send a direct message", cat: "chat" },
+  { cmd: "/file path", desc: "share a file (<45KB)", cat: "chat" },
+  { cmd: "/save # [path]", desc: "save a received file", cat: "chat" },
+  { cmd: "/help", desc: "show all commands", cat: "chat" },
   { cmd: "/back", desc: "back to board chat", cat: "chat" },
   { cmd: "@name", desc: "mention a user", cat: "chat" },
 ];
@@ -106,6 +110,7 @@ export default function Home() {
           </div>
           <nav className="flex justify-center gap-4 text-xs pt-1">
             <a href="/docs" className="text-[var(--color-lime)] hover:underline">docs</a>
+            <a href="/web" className="text-[var(--color-foreground)]/40 hover:text-[var(--color-lime)]">web client</a>
             <a href="https://limescan.xyz" className="text-[var(--color-foreground)]/40 hover:text-[var(--color-lime)]">limescan</a>
             <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" className="text-[var(--color-foreground)]/40 hover:text-[var(--color-lime)]">github</a>
           </nav>
